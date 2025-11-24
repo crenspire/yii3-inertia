@@ -1,0 +1,28 @@
+{
+    "name": "crenspire/yii3-inertia-example",
+    "description": "Example Yii3 application using Inertia.js",
+    "type": "project",
+    "require": {
+        "php": "^8.1",
+        "crenspire/yii3-inertia": "*",
+        "nyholm/psr7": "^1.5",
+        "nyholm/psr7-server": "^1.0",
+        "yiisoft/http": "^1.0",
+        "yiisoft/router": "^1.0",
+        "yiisoft/di": "^1.0"
+    },
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../../"
+        }
+    ],
+    "autoload": {
+        "psr-4": {
+            "app\\": "src/"
+        }
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true
+}
+
