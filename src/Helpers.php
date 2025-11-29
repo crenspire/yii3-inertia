@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Crenspire\Yii3Inertia;
+namespace Crenspire\Inertia;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;

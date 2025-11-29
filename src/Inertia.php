@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Crenspire\Yii3Inertia;
+namespace Crenspire\Inertia;
 
 use Closure;
 use Psr\Http\Message\ServerRequestInterface;
@@ -103,7 +103,7 @@ class Inertia
             'component' => $component,
             'props' => $allProps,
             'url' => $url,
-            'version' => self::getVersion(),
+            'version' => self::version(),
         ];
     }
 
@@ -279,7 +279,7 @@ class Inertia
         }
 
         $requestVersion = $request->getHeaderLine('X-Inertia-Version');
-        $currentVersion = self::getVersion();
+        $currentVersion = self::version();
 
         return $requestVersion !== (string) $currentVersion;
     }

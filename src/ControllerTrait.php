@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace Crenspire\Yii3Inertia;
+namespace Crenspire\Inertia;
 
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -69,16 +69,36 @@ trait ControllerTrait
     /**
      * Get the response factory instance
      * 
-     * This method should be overridden or the factory should be injected via DI
+     * This method tries to resolve ResponseFactory from DI container if available,
+     * otherwise it should be overridden or injected via constructor.
      * 
      * @return ResponseFactory
      */
     protected function getResponseFactory(): ResponseFactory
     {
-        // This should be injected via DI in production
-        // For now, throw an exception to encourage proper DI setup
+        // Try to resolve from DI container if available
+        if (method_exists($this, 'getContainer')) {
+            $container = $this->getContainer();
+            if ($container instanceof \Psr\Container\ContainerInterface) {
+                try {
+                    return $container->get(ResponseFactory::class);
+                } catch (\Psr\Container\NotFoundExceptionInterface | \Psr\Container\ContainerExceptionInterface $e) {
+                    // Container doesn't have ResponseFactory, fall through
+                }
+            }
+        }
+        
+        // Try to get from property if injected via constructor
+        if (property_exists($this, 'responseFactory') && $this->responseFactory instanceof ResponseFactory) {
+            return $this->responseFactory;
+        }
+        
+        // Last resort: throw exception with helpful message
         throw new \RuntimeException(
-            'ResponseFactory must be injected via DI. Override getResponseFactory() or inject ResponseFactory in your controller.'
+            'ResponseFactory must be injected via DI or constructor. ' .
+            'Options: 1) Include ConfigProvider in your Yii3 config, ' .
+            '2) Inject ResponseFactory in controller constructor, ' .
+            '3) Override getResponseFactory() method.'
         );
     }
 }

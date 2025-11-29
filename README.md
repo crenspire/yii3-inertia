@@ -22,15 +22,78 @@ Install via Composer:
 composer require crenspire/yii3-inertia
 ```
 
-## Quick Start
+## Yii3 Quick Start (Plug-and-Play)
+
+For Yii3 applications, the package provides automatic configuration via ConfigProvider:
+
+### 1. Include ConfigProvider in Your Yii3 Config
+
+```php
+// config/web.php or your main config file
+return [
+    // Include Inertia ConfigProvider for auto-configuration
+    \Crenspire\Inertia\ConfigProvider::class,
+    
+    // ... your other config
+];
+```
+
+### 2. Add Middleware to Your Middleware Stack
+
+```php
+// config/web.php
+return [
+    'middleware' => [
+        // Error handling middleware
+        // Authentication middleware
+        \Crenspire\Inertia\Middleware\InertiaMiddleware::class, // ← Add here
+        // Routing middleware
+        // Controller/Action execution
+    ],
+];
+```
+
+### 3. Use in Your Controllers
+
+```php
+use Crenspire\Inertia\ControllerTrait;
+use Crenspire\Inertia\ResponseFactory;
+use Psr\Http\Message\ResponseInterface;
+use Psr\Http\Message\ServerRequestInterface;
+
+class HomeController
+{
+    use ControllerTrait;
+    
+    public function __construct(
+        private ResponseFactory $responseFactory
+    ) {}
+    
+    protected function getResponseFactory(): ResponseFactory
+    {
+        return $this->responseFactory;
+    }
+    
+    public function index(ServerRequestInterface $request): ResponseInterface
+    {
+        return $this->inertiaRender('Home', [
+            'title' => 'Welcome',
+        ], $request);
+    }
+}
+```
+
+That's it! The ConfigProvider automatically configures all services. See [examples/yii3-web](examples/yii3-web) for a complete example.
+
+## Quick Start (Manual Setup)
 
 ### 1. Register Middleware
 
 Register the Inertia middleware in your application's middleware stack:
 
 ```php
-use Crenspire\Yii3Inertia\Middleware\InertiaMiddleware;
-use Crenspire\Yii3Inertia\ResponseFactory;
+use Crenspire\Inertia\Middleware\InertiaMiddleware;
+use Crenspire\Inertia\ResponseFactory;
 use Nyholm\Psr7\Factory\Psr17Factory;
 
 $psr17Factory = new Psr17Factory();
@@ -44,8 +107,8 @@ $inertiaMiddleware = new InertiaMiddleware($responseFactory, $psr17Factory);
 ### 2. Use in Actions/Controllers
 
 ```php
-use Crenspire\Yii3Inertia\Inertia;
-use Crenspire\Yii3Inertia\ResponseFactory;
+use Crenspire\Inertia\Inertia;
+use Crenspire\Inertia\ResponseFactory;
 use Psr\Http\Message\ServerRequestInterface;
 use Psr\Http\Message\ResponseInterface;
 
@@ -73,10 +136,11 @@ class HomeAction
 
 ### 3. Using Controller Trait
 
-For easier usage in controllers:
+For easier usage in controllers (works with Yii3 DI):
 
 ```php
-use Crenspire\Yii3Inertia\ControllerTrait;
+use Crenspire\Inertia\ControllerTrait;
+use Crenspire\Inertia\ResponseFactory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
@@ -84,12 +148,9 @@ class HomeController
 {
     use ControllerTrait;
     
-    private ResponseFactory $responseFactory;
-    
-    public function __construct(ResponseFactory $responseFactory)
-    {
-        $this->responseFactory = $responseFactory;
-    }
+    public function __construct(
+        private ResponseFactory $responseFactory
+    ) {}
     
     protected function getResponseFactory(): ResponseFactory
     {
@@ -105,7 +166,57 @@ class HomeController
 }
 ```
 
-### 4. Setup Frontend
+**Note:** With Yii3 ConfigProvider, `ResponseFactory` is automatically injected via DI container.
+
+### 4. Using InertiaAction Base Class (Recommended for Actions)
+
+For actions, extend the `InertiaAction` base class to eliminate boilerplate:
+
+```php
+use Crenspire\Inertia\Action\InertiaAction;
+use Psr\Http\Message\ResponseInterface;
+
+class HomeAction extends InertiaAction
+{
+    public function __invoke(): ResponseInterface
+    {
+        // Helper methods available:
+        // - $this->render() - Render Inertia page
+        // - $this->getRequest() - Get current request
+        // - $this->getQueryParam() - Get query parameter
+        // - $this->getBodyParam() - Get body parameter
+        // - $this->redirect() - Create redirect response
+        // - $this->isInertiaRequest() - Check if Inertia request
+        
+        return $this->render('Home', [
+            'title' => 'Welcome',
+            'page' => $this->getQueryParam('page', 1),
+        ]);
+    }
+}
+```
+
+**With DI Container (Yii3):**
+
+```php
+// Action is automatically instantiated with request and ResponseFactory
+$action = $container->get(HomeAction::class);
+return $action();
+```
+
+**Manual instantiation:**
+
+```php
+$action = new HomeAction($request, $responseFactory);
+return $action();
+```
+
+The base class automatically:
+- Sets request in Inertia service
+- Resolves ResponseFactory from DI container (if available)
+- Provides helper methods for common operations
+
+### 5. Setup Frontend
 
 Install Inertia.js and your frontend framework:
 
@@ -133,6 +244,52 @@ createInertiaApp({
 ```
 
 ## API Reference
+
+### InertiaAction Base Class
+
+The `InertiaAction` base class provides a convenient way to create Inertia actions with automatic request handling and helper methods.
+
+**Available Helper Methods:**
+
+- `render(string $component, array $props = []): ResponseInterface` - Render an Inertia page
+- `getRequest(): ServerRequestInterface` - Get the current request
+- `getQueryParam(string $name, $default = null)` - Get a query parameter
+- `getQueryParams(): array` - Get all query parameters
+- `getBodyParam(string $name, $default = null)` - Get a request body parameter
+- `getParsedBody(): array` - Get parsed request body
+- `getAttribute(string $name, $default = null)` - Get a request attribute
+- `getMethod(): string` - Get request method
+- `isGet(): bool` - Check if request is GET
+- `isPost(): bool` - Check if request is POST
+- `isInertiaRequest(): bool` - Check if request is an Inertia request
+- `redirect(string $url): ResponseInterface` - Create an Inertia redirect response
+- `getResponseFactory(): ResponseFactory` - Get the ResponseFactory instance
+
+**Example:**
+
+```php
+use Crenspire\Inertia\Action\InertiaAction;
+use Psr\Http\Message\ResponseInterface;
+
+class UserAction extends InertiaAction
+{
+    public function __invoke(): ResponseInterface
+    {
+        if ($this->isPost()) {
+            // Handle POST request
+            $name = $this->getBodyParam('name');
+            // ... save user
+            return $this->redirect('/users');
+        }
+        
+        // Handle GET request
+        $userId = (int) $this->getQueryParam('id', 0);
+        return $this->render('User', [
+            'userId' => $userId,
+        ]);
+    }
+}
+```
 
 ### Inertia::render()
 
@@ -238,6 +395,47 @@ $payload = Inertia::render('Dashboard', [
 
 ## Configuration
 
+### Asset Configuration (AssetConfig)
+
+Configure Vite dev server and production asset paths via Yii3 params:
+
+```php
+// config/params.php
+return [
+    'inertia' => [
+        'assetConfig' => [
+            'viteHost' => 'localhost',           // Vite dev server host
+            'vitePort' => 5173,                  // Vite dev server port
+            'viteEntryPath' => 'src/main.jsx',   // Entry point for Vite dev server
+            'manifestEntryKey' => 'src/main.jsx', // Manifest entry key (matches vite.config.js input)
+            'publicPath' => 'public',             // Public directory path
+            'buildOutputDir' => 'dist',           // Build output directory
+            'manifestFileName' => 'manifest.json', // Manifest file name
+        ],
+    ],
+];
+```
+
+The `AssetConfig` is automatically resolved from params when using ConfigProvider. You can also inject it directly:
+
+```php
+use Crenspire\Inertia\AssetConfig;
+
+// Get from container
+$assetConfig = $container->get(AssetConfig::class);
+
+// Or create manually
+$assetConfig = new AssetConfig(
+    viteHost: 'localhost',
+    vitePort: 5173,
+    viteEntryPath: 'src/main.jsx',
+    manifestEntryKey: 'src/main.jsx',
+    publicPath: 'public',
+    buildOutputDir: 'dist',
+    manifestFileName: 'manifest.json'
+);
+```
+
 ### Root View Path
 
 You can configure the root view path:
@@ -248,11 +446,21 @@ Inertia::setRootView('custom-inertia');
 
 ### Dependency Injection (DI) Container
 
-For Yii3 applications using DI containers, you can configure the middleware and response factory:
+**For Yii3 applications, use ConfigProvider (recommended):**
 
 ```php
-use Crenspire\Yii3Inertia\Middleware\InertiaMiddleware;
-use Crenspire\Yii3Inertia\ResponseFactory;
+// config/web.php
+return [
+    // ConfigProvider automatically configures all services
+    \Crenspire\Inertia\ConfigProvider::class,
+];
+```
+
+**Manual DI configuration (if not using ConfigProvider):**
+
+```php
+use Crenspire\Inertia\Middleware\InertiaMiddleware;
+use Crenspire\Inertia\ResponseFactory;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\StreamFactoryInterface;
 
@@ -261,11 +469,15 @@ $container->set(ResponseFactory::class, function ($container) {
     $responseFactory = $container->get(ResponseFactoryInterface::class);
     $streamFactory = $container->get(StreamFactoryInterface::class);
     
-    // Optional: provide a view renderer callback
-    $viewRenderer = function ($view, $payload) {
-        // Your view rendering logic
-        return renderView($view, ['page' => $payload]);
-    };
+    // Required: provide a view renderer callback
+    // With Yii3 View (recommended):
+    $view = $container->get(\Yiisoft\View\WebView::class);
+    $viewRenderer = \Crenspire\Inertia\ResponseFactory::createViewRenderer($view);
+    
+    // Or custom view renderer:
+    // $viewRenderer = function (string $view, array $payload): string {
+    //     return $yourViewRenderer->render($view, ['page' => $payload]);
+    // };
     
     return new ResponseFactory($responseFactory, $streamFactory, $viewRenderer);
 });
@@ -279,9 +491,18 @@ $container->set(InertiaMiddleware::class, function ($container) {
 
 ### View Renderer Integration
 
-You can provide a custom view renderer to the ResponseFactory:
+**Important:** `ResponseFactory` now requires a view renderer. The ConfigProvider automatically configures it using Yii3's `WebView` or `View` if available.
+
+**Manual configuration:**
 
 ```php
+use Crenspire\Inertia\ResponseFactory;
+use Crenspire\Inertia\ViewRenderer;
+
+// With Yii3 View
+$viewRenderer = ResponseFactory::createViewRenderer($yii3View);
+
+// Or custom view renderer
 $viewRenderer = function (string $view, array $payload): string {
     // Use your view rendering system (Twig, Blade, etc.)
     return $yourViewRenderer->render($view, ['page' => $payload]);
@@ -294,12 +515,16 @@ $responseFactory = new ResponseFactory(
 );
 ```
 
+**Note:** If `yiisoft/view` is not installed, you must provide a custom view renderer. The ConfigProvider will throw an exception if no view renderer is available.
+
 ### Bootstrap/Initialization
 
 For shared props that should be available on every page, set them in your application bootstrap:
 
+**Using Inertia::share() directly (recommended):**
+
 ```php
-use Crenspire\Yii3Inertia\Inertia;
+use Crenspire\Inertia\Inertia;
 
 // In your application bootstrap or middleware
 Inertia::share('user', function () use ($userService) {
@@ -311,6 +536,30 @@ Inertia::share('app', [
     'version' => '1.0.0',
 ]);
 ```
+
+**Using Bootstrap helper (optional convenience):**
+
+```php
+use Crenspire\Inertia\Bootstrap;
+
+// In your application bootstrap
+Bootstrap::setupSharedProps($userService, $flashService);
+Bootstrap::setupVersion('/path/to/manifest.json');
+Bootstrap::setupRootView('inertia');
+
+// Or use the complete setup method
+Bootstrap::setup([
+    'userService' => $userService,
+    'flashService' => $flashService,
+    'manifestPath' => '/path/to/manifest.json',
+    'rootView' => 'inertia',
+    'shared' => [
+        'app' => ['name' => 'My App'],
+    ],
+]);
+```
+
+**Note:** The Bootstrap helper is completely optional. It provides convenience methods but has zero overhead if not used. You can use `Inertia::share()` directly for the same result.
 
 ## Version Management
 
@@ -361,9 +610,37 @@ Example middleware stack order:
 5. Controller/Action execution
 ```
 
-## Running the Example
+## Examples
 
-The repository includes a complete example application. To run it:
+The repository includes several example applications:
+
+### Yii3 Web Application Example
+
+Full Yii3 web application with ConfigProvider, controllers, and middleware:
+
+```bash
+cd examples/yii3-web
+composer install
+php -S localhost:8000 -t public
+```
+
+See [examples/yii3-web/README.md](examples/yii3-web/README.md) for details.
+
+### Yii3 Minimal Example
+
+Minimal Yii3 setup (DI + Router only):
+
+```bash
+cd examples/yii3-minimal
+composer install
+php -S localhost:8000 -t public
+```
+
+See [examples/yii3-minimal/README.md](examples/yii3-minimal/README.md) for details.
+
+### Basic PSR Example
+
+Basic PSR-7/PSR-15 example (for non-Yii3 frameworks):
 
 ```bash
 # Install dependencies
@@ -385,7 +662,7 @@ cd ../public
 php -S localhost:8000
 ```
 
-Visit `http://localhost:8000` in your browser.
+**Note:** For Yii3 applications, use the Yii3 examples above instead.
 
 ## Troubleshooting
 

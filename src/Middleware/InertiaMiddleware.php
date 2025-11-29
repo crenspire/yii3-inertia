@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace Crenspire\Yii3Inertia\Middleware;
+namespace Crenspire\Inertia\Middleware;
 
-use Crenspire\Yii3Inertia\Inertia;
-use Crenspire\Yii3Inertia\ResponseFactory;
+use Crenspire\Inertia\Inertia;
+use Crenspire\Inertia\ResponseFactory;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;

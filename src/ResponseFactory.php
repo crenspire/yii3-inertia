@@ -2,11 +2,12 @@
 
 declare(strict_types=1);
 
-namespace Crenspire\Yii3Inertia;
+namespace Crenspire\Inertia;
 
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\StreamFactoryInterface;
+use Crenspire\Inertia\ViewRenderer;
 
 /**
  * Factory for creating Inertia responses (JSON for Inertia requests, HTML for regular requests)
@@ -15,12 +16,13 @@ class ResponseFactory
 {
     private ResponseFactoryInterface $responseFactory;
     private StreamFactoryInterface $streamFactory;
-    private ?callable $viewRenderer = null;
+    /** @var callable */
+    private $viewRenderer;
 
     public function __construct(
         ResponseFactoryInterface $responseFactory,
         StreamFactoryInterface $streamFactory,
-        ?callable $viewRenderer = null
+        callable $viewRenderer
     ) {
         $this->responseFactory = $responseFactory;
         $this->streamFactory = $streamFactory;
@@ -67,15 +69,11 @@ class ResponseFactory
      */
     public function html(array $payload, string $rootView): ResponseInterface
     {
-        // Use view renderer if provided, otherwise use default template
-        if ($this->viewRenderer !== null) {
-            try {
-                $html = call_user_func($this->viewRenderer, $rootView, $payload);
-            } catch (\Exception $e) {
-                throw new \RuntimeException("View renderer failed: {$e->getMessage()}", 0, $e);
-            }
-        } else {
-            $html = $this->renderRootView($payload, $rootView);
+        // View renderer is required (enforced in constructor) - no fallback HTML template
+        try {
+            $html = call_user_func($this->viewRenderer, $rootView, $payload);
+        } catch (\Exception $e) {
+            throw new \RuntimeException("View renderer failed: {$e->getMessage()}", 0, $e);
         }
         
         $stream = $this->streamFactory->createStream($html);
@@ -88,40 +86,20 @@ class ResponseFactory
     }
 
     /**
-     * Render the root view template
+     * Create a view renderer callback from Yii3 View instance
      * 
-     * @param array<string, mixed> $payload
-     * @param string $rootView
-     * @return string
+     * Helper method to create a view renderer callback for use with ResponseFactory.
+     * This is automatically handled by ConfigProvider, but can be used manually if needed.
+     * 
+     * @param object $view Yii3 ViewInterface instance
+     * @return callable View renderer callback
      */
-    private function renderRootView(array $payload, string $rootView): string
+    public static function createViewRenderer(object $view): callable
     {
-        // Simple template rendering
-        // In production, you'd use a proper view renderer
-        try {
-            $page = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES);
-        } catch (\JsonException $e) {
-            throw new \RuntimeException("Failed to encode payload for root view: {$e->getMessage()}", 0, $e);
-        }
-        
-        // Escape the JSON for HTML attribute
-        $pageEscaped = htmlspecialchars($page, ENT_QUOTES, 'UTF-8');
-        
-        return <<<HTML
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Inertia.js App</title>
-    <script type="module" crossorigin src="/dist/assets/index.js"></script>
-    <link rel="stylesheet" crossorigin href="/dist/assets/index.css">
-</head>
-<body>
-    <div id="app" data-page="{$pageEscaped}"></div>
-</body>
-</html>
-HTML;
+        return static function (string $viewName, array $payload) use ($view): string {
+            return ViewRenderer::render($view, $viewName, $payload);
+        };
     }
+
 }
 

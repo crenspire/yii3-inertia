@@ -6,8 +6,8 @@
     "license": "MIT",
     "authors": [
         {
-            "name": "Crenspire",
-            "email": "support@crenspire.com"
+            "name": "Akshay Joshi",
+            "email": "akshay.joshi@crenspire.com"
         }
     ],
     "require": {
@@ -15,18 +15,22 @@
         "psr/http-message": "^2.0",
         "psr/http-server-middleware": "^1.0",
         "psr/http-server-handler": "^1.0",
-        "yiisoft/http": "^1.0",
-        "yiisoft/router": "^1.0"
+        "yiisoft/di": "^1.0",
+        "yiisoft/config": "^1.0"
     },
     "require-dev": {
         "phpunit/phpunit": "^10.0",
-        "nyholm/psr7": "^1.5",
-        "yiisoft/di": "^1.0",
-        "yiisoft/router": "^1.0"
+        "nyholm/psr7": "^1.5"
+    },
+    "suggest": {
+        "yiisoft/view": "^1.0|^2.0 For Yii3 view renderer integration",
+        "yiisoft/http": "^1.0|^2.0|^3.0|^4.0 For Yii3 HTTP utilities (optional)",
+        "yiisoft/router": "^1.0|^2.0|^3.0|^4.0 For Yii3 routing (optional)",
+        "yiisoft/yii-web": "^1.0 For full Yii3 web application support"
     },
     "autoload": {
         "psr-4": {
-            "Crenspire\\Yii3Inertia\\": "src/"
+            "Crenspire\\Inertia\\": "src/"
         },
         "files": [
             "src/Helpers.php"
@@ -34,7 +38,7 @@
     },
     "autoload-dev": {
         "psr-4": {
-            "Crenspire\\Yii3Inertia\\Tests\\": "tests/"
+            "Crenspire\\Inertia\\Tests\\": "tests/"
         }
     },
     "config": {
