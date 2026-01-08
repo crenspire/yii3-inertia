@@ -15,7 +15,7 @@ declare(strict_types=1);
  * ```php
  * return [
  *     // Include ConfigProvider for auto-configuration
- *     \Crenspire\Yii3Inertia\ConfigProvider::class,
+ *     \Crenspire\Inertia\ConfigProvider::class,
  *     
  *     // Optionally include this config for middleware and settings
  *     ...require __DIR__ . '/inertia-web.php',
@@ -23,7 +23,7 @@ declare(strict_types=1);
  * ```
  */
 
-use Crenspire\Yii3Inertia\Middleware\InertiaMiddleware;
+use Crenspire\Inertia\Middleware\InertiaMiddleware;
 
 return [
     // Middleware stack configuration
@@ -33,24 +33,9 @@ return [
         // Example middleware stack order:
         // 1. Error handling middleware
         // 2. Authentication middleware
-        // 3. InertiaMiddleware::class,  ← Add here
+        // 3. \Crenspire\Inertia\Middleware\InertiaMiddleware::class,  ← Add here
         // 4. Routing middleware
         // 5. Controller/Action execution
-    ],
-
-    // Default Inertia settings (optional)
-    'inertia' => [
-        // Root view template path or name
-        'root_view' => 'inertia',
-        
-        // Asset version callback or string
-        // Examples:
-        // 'version' => '1.0.0',
-        // 'version' => fn() => filemtime('/path/to/manifest.json'),
-        'version' => null,
-        
-        // Shared props (can also be set via Inertia::share())
-        'shared' => [],
     ],
 ];
 

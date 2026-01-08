@@ -19,7 +19,22 @@ use Yiisoft\Di\ContainerConfig;
  * ```php
  * return [
  *     // ... other config
- *     Crenspire\Inertia\ConfigProvider::class,
+ *     \Crenspire\Inertia\ConfigProvider::class,
+ * ];
+ * ```
+ * 
+ * Services can be overridden in your config if needed:
+ * ```php
+ * return [
+ *     \Crenspire\Inertia\ConfigProvider::class,
+ *     \Crenspire\Inertia\AssetConfig::class => static function (ContainerInterface $container) {
+ *         // Custom AssetConfig
+ *         return new \Crenspire\Inertia\AssetConfig(
+ *             viteHost: 'localhost',
+ *             vitePort: 5173,
+ *             // ... other options
+ *         );
+ *     },
  * ];
  * ```
  */
@@ -33,39 +48,38 @@ final class ConfigProvider
     public function getDefinitions(): array
     {
         return [
-            // AssetConfig - can be overridden in app config via params
+            // AssetConfig - uses default values, can be overridden in app config
             AssetConfig::class => static function (ContainerInterface $container): AssetConfig {
-                // Try to get from params if configured
-                // Params are typically accessed via ApplicationParams or similar
-                // For now, we'll check if there's a way to access params
+                // Try to read from params if available (graceful degradation)
                 try {
-                    // Try to get params from container if available
                     if ($container->has('params')) {
                         $params = $container->get('params');
-                        $inertiaConfig = $params['inertia'] ?? null;
-                        if ($inertiaConfig !== null && isset($inertiaConfig['assetConfig'])) {
-                            $config = $inertiaConfig['assetConfig'];
-                            return new AssetConfig(
-                                $config['viteHost'] ?? null,
-                                $config['vitePort'] ?? null,
-                                $config['viteEntryPath'] ?? null,
-                                $config['manifestEntryKey'] ?? null,
-                                $config['publicPath'] ?? null,
-                                $config['buildOutputDir'] ?? null,
-                                $config['manifestFileName'] ?? null
-                            );
+                        if (is_array($params) && isset($params['inertia']['assetConfig'])) {
+                            $config = $params['inertia']['assetConfig'];
+                            if (is_array($config)) {
+                                return new AssetConfig(
+                                    $config['viteHost'] ?? null,
+                                    $config['vitePort'] ?? null,
+                                    $config['viteEntryPath'] ?? null,
+                                    $config['manifestEntryKey'] ?? null,
+                                    $config['publicPath'] ?? null,
+                                    $config['buildOutputDir'] ?? null,
+                                    $config['manifestFileName'] ?? null
+                                );
+                            }
                         }
                     }
                 } catch (\Throwable $e) {
                     // Params not available, use defaults
                 }
+                
                 // Return default config
                 return new AssetConfig();
             },
             
             // ResponseFactory with automatic PSR factory injection
             ResponseFactory::class => static function (ContainerInterface $container): ResponseFactory {
-                $responseFactory = $container->get(ResponseFactoryInterface::class);
+                $psrResponseFactory = $container->get(ResponseFactoryInterface::class);
                 $streamFactory = $container->get(StreamFactoryInterface::class);
                 
                 // View renderer is required - try WebView first (for web), then View (for console)
@@ -77,9 +91,11 @@ final class ConfigProvider
                             return ViewRenderer::render($view, $viewName, $payload);
                         };
                     } catch (\Throwable $e) {
-                        // View not available
+                        // View not available, try View class
                     }
-                } elseif ($container->has(\Yiisoft\View\View::class)) {
+                }
+                
+                if ($viewRenderer === null && $container->has(\Yiisoft\View\View::class)) {
                     try {
                         $view = $container->get(\Yiisoft\View\View::class);
                         $viewRenderer = static function (string $viewName, array $payload) use ($view): string {
@@ -96,7 +112,7 @@ final class ConfigProvider
                     );
                 }
                 
-                return new ResponseFactory($responseFactory, $streamFactory, $viewRenderer);
+                return new ResponseFactory($psrResponseFactory, $streamFactory, $viewRenderer);
             },
             
             // InertiaMiddleware with ResponseFactory dependency
@@ -112,7 +128,8 @@ final class ConfigProvider
     /**
      * Get container configuration
      * 
-     * This method is called by Yii3's config system to register services
+     * This method is called by Yii3's config system to register services.
+     * Returns configuration that will be merged with existing config.
      * 
      * @return array<string, mixed>
      */
@@ -125,4 +142,3 @@ final class ConfigProvider
         ];
     }
 }
-
