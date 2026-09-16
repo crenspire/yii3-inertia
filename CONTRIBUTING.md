@@ -1,52 +1,41 @@
 # Contributing
 
-Thank you for considering contributing to Yii3 Inertia!
+Thank you for considering contributing to Yii3 Inertia.
 
-## Development Setup
+## Development setup
 
-1. Fork the repository
-2. Clone your fork: `git clone https://github.com/your-username/yii3-inertia.git`
-3. Install dependencies: `composer install`
-4. Run tests: `vendor/bin/phpunit`
+```bash
+git clone https://github.com/crenspire/yii3-inertia.git
+cd yii3-inertia
+composer install
+```
 
-## Code Style
+## Checks
 
-- Follow PSR-12 coding standards
-- Use strict types: `declare(strict_types=1);`
-- Add type hints and return types to all methods
-- Write clear docblocks for public methods
-- Follow PSR-7 and PSR-15 standards
+Run both before opening a pull request:
 
-## Testing
+```bash
+composer test     # PHPUnit
+composer analyse  # PHPStan
+```
 
-- Write tests for new features
-- Ensure all tests pass: `vendor/bin/phpunit`
-- Use PSR-7 mocks (e.g., Nyholm\Psr7) for integration tests
-- Aim for high code coverage
+To try changes in a browser, run [`examples/psr15`](examples/psr15), which uses the package from the repository.
 
-## Pull Request Process
+## Guidelines
 
-1. Create a feature branch from `main`
-2. Make your changes
-3. Add or update tests
-4. Ensure all tests pass
-5. Update documentation if needed
-6. Submit a pull request with a clear description
+- Follow PSR-12 and use `declare(strict_types=1);`.
+- Keep services free of per-request state; pass request data through request attributes.
+- Match the [Inertia.js protocol](https://inertiajs.com/docs/v3/core-concepts/the-protocol) and the reference Laravel
+  adapter when adding protocol features.
+- Add tests for new behavior and update the README and CHANGELOG.
 
-## Semantic Versioning
+## Pull requests
 
-We follow [Semantic Versioning](https://semver.org/):
-- **MAJOR** version for incompatible API changes
-- **MINOR** version for new functionality in a backwards compatible manner
-- **PATCH** version for backwards compatible bug fixes
+1. Create a feature branch from `develop`.
+2. Make your changes with tests.
+3. Make sure `composer test` and `composer analyse` pass.
+4. Open a pull request with a clear description.
 
-## Commit Messages
+## Versioning
 
-Use clear, descriptive commit messages:
-- Use present tense ("Add feature" not "Added feature")
-- Reference issues when applicable: "Fix #123"
-
-## Questions?
-
-Feel free to open an issue for any questions or concerns.
-
+The project follows [Semantic Versioning](https://semver.org/).

@@ -1,722 +1,419 @@
-# Yii3 Inertia.js Adapter
+# Inertia.js adapter for Yii3
 
-[![CI](https://github.com/crenspire/yii3-inertia/workflows/CI/badge.svg)](https://github.com/crenspire/yii3-inertia/actions)
+[![CI](https://github.com/crenspire/yii3-inertia/actions/workflows/ci.yml/badge.svg)](https://github.com/crenspire/yii3-inertia/actions/workflows/ci.yml)
 
-An Inertia.js adapter for Yii3 framework, providing a seamless bridge between your Yii3 backend and modern JavaScript frontend frameworks (React, Vue, Svelte).
+A server-side [Inertia.js](https://inertiajs.com) adapter for [Yii3](https://www.yiiframework.com) and any other
+PSR-7/PSR-15 application. Build single-page apps with React, Vue or Svelte while keeping routing, controllers and
+validation in PHP.
 
-## Features
+- Implements the Inertia.js 3 protocol, and works with Inertia.js 1 and 2 clients through `legacyBody()`
+- Partial reloads, and deferred, optional, merge, once and infinite scroll props
+- Validation errors, error bags, flash data and history encryption
+- Asset versioning from the Vite manifest, plus a Vite tag helper for dev and production
+- Optional server-side rendering
+- Stateless services that are safe for RoadRunner, Swoole and FrankenPHP workers
+- Zero-config setup in Yii3 through `yiisoft/config`
 
-- 🚀 **Simple API**: Match the developer experience of `inertia-laravel`
-- 📦 **Shared Props**: Share data across all Inertia responses
-- 🔄 **Partial Reloads**: Support for partial page updates
-- 🎯 **Asset Versioning**: Automatic version management for cache busting
-- 🔌 **PSR-15 Middleware**: Standard middleware implementation
-- 🧪 **Well Tested**: Comprehensive unit and integration tests
-- 📚 **Full Documentation**: Complete usage examples and guides
+Upgrading from 1.x? See [UPGRADE.md](UPGRADE.md).
+
+## Requirements
+
+- PHP 8.2 or later
+- A PSR-17 HTTP factory implementation, such as `nyholm/psr7` or `httpsoft/http-message`
 
 ## Installation
-
-Install via Composer:
 
 ```bash
 composer require crenspire/yii3-inertia
 ```
 
-## Yii3 Quick Start (Plug-and-Play)
+## Yii3 setup
 
-For Yii3 applications, the package provides automatic configuration via ConfigProvider:
+The package ships `params.php` and `di-web.php` for `yiisoft/config`, so `Inertia`, `InertiaMiddleware`, the Vite
+helper, the asset version and the session flash store are registered automatically.
 
-### 1. Include ConfigProvider in Your Yii3 Config
+### 1. Add the middleware
 
-```php
-// config/web.php or your main config file
-return [
-    // Include Inertia ConfigProvider for auto-configuration
-    \Crenspire\Inertia\ConfigProvider::class,
-    
-    // ... your other config
-];
-```
-
-### 2. Add Middleware to Your Middleware Stack
+In `config/web/di/application.php`, add `InertiaMiddleware` before `Router`. If you use `yiisoft/csrf`, also add
+`XsrfTokenMiddleware` between `SessionMiddleware` and `CsrfTokenMiddleware`:
 
 ```php
-// config/web.php
-return [
-    'middleware' => [
-        // Error handling middleware
-        // Authentication middleware
-        \Crenspire\Inertia\Middleware\InertiaMiddleware::class, // ← Add here
-        // Routing middleware
-        // Controller/Action execution
+'withMiddlewares()' => [
+    [
+        ErrorCatcher::class,
+        SessionMiddleware::class,
+        \Crenspire\Inertia\Middleware\XsrfTokenMiddleware::class,
+        CsrfTokenMiddleware::class,
+        RequestCatcherMiddleware::class,
+        \Crenspire\Inertia\Middleware\InertiaMiddleware::class,
+        Router::class,
     ],
-];
+],
 ```
 
-### 3. Use in Your Controllers
+`XsrfTokenMiddleware` sets the `XSRF-TOKEN` cookie that the Inertia client sends back as `X-XSRF-TOKEN`, and copies
+that header to the one `CsrfTokenMiddleware` checks.
+
+### 2. Create the root view
+
+Copy [`stubs/inertia.php`](stubs/inertia.php) to `resources/views/inertia.php`:
 
 ```php
-use Crenspire\Inertia\ControllerTrait;
-use Crenspire\Inertia\ResponseFactory;
-use Psr\Http\Message\ResponseInterface;
-use Psr\Http\Message\ServerRequestInterface;
-
-class HomeController
-{
-    use ControllerTrait;
-    
-    public function __construct(
-        private ResponseFactory $responseFactory
-    ) {}
-    
-    protected function getResponseFactory(): ResponseFactory
-    {
-        return $this->responseFactory;
-    }
-    
-    public function index(ServerRequestInterface $request): ResponseInterface
-    {
-        return $this->inertiaRender('Home', [
-            'title' => 'Welcome',
-        ], $request);
-    }
-}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title data-inertia>Application</title>
+    <?= $vite->reactRefresh() ?>
+    <?= $vite->tags('resources/js/app.jsx') ?>
+    <?= $inertia->head() ?>
+</head>
+<body>
+    <?= $inertia->body() ?>
+</body>
+</html>
 ```
 
-That's it! The ConfigProvider automatically configures all services. See [examples/yii3-web](examples/yii3-web) for a complete example.
-
-## Quick Start (Manual Setup)
-
-### 1. Register Middleware
-
-Register the Inertia middleware in your application's middleware stack:
-
-```php
-use Crenspire\Inertia\Middleware\InertiaMiddleware;
-use Crenspire\Inertia\ResponseFactory;
-use Nyholm\Psr7\Factory\Psr17Factory;
-
-$psr17Factory = new Psr17Factory();
-$responseFactory = new ResponseFactory($psr17Factory, $psr17Factory);
-$inertiaMiddleware = new InertiaMiddleware($responseFactory, $psr17Factory);
-
-// Add to your middleware stack
-// Note: Middleware should be registered early in the stack to set up the request
-```
-
-### 2. Use in Actions/Controllers
+### 3. Render pages from actions
 
 ```php
 use Crenspire\Inertia\Inertia;
-use Crenspire\Inertia\ResponseFactory;
-use Psr\Http\Message\ServerRequestInterface;
-use Psr\Http\Message\ResponseInterface;
-
-class HomeAction
-{
-    public function __invoke(
-        ServerRequestInterface $request,
-        ResponseFactory $responseFactory
-    ): ResponseInterface {
-        Inertia::setRequest($request);
-        
-        $payload = Inertia::render('Home', [
-            'title' => 'Welcome',
-            'user' => $user,
-        ]);
-        
-        if (Inertia::isInertiaRequest($request)) {
-            return $responseFactory->json($payload);
-        }
-        
-        return $responseFactory->html($payload, Inertia::getRootView());
-    }
-}
-```
-
-### 3. Using Controller Trait
-
-For easier usage in controllers (works with Yii3 DI):
-
-```php
-use Crenspire\Inertia\ControllerTrait;
-use Crenspire\Inertia\ResponseFactory;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 
-class HomeController
+final readonly class IndexAction
 {
-    use ControllerTrait;
-    
     public function __construct(
-        private ResponseFactory $responseFactory
+        private Inertia $inertia,
+        private UserRepository $users,
     ) {}
-    
-    protected function getResponseFactory(): ResponseFactory
+
+    public function __invoke(ServerRequestInterface $request): ResponseInterface
     {
-        return $this->responseFactory;
-    }
-    
-    public function index(ServerRequestInterface $request): ResponseInterface
-    {
-        return $this->inertiaRender('Home', [
-            'title' => 'Welcome',
-        ], $request);
-    }
-}
-```
-
-**Note:** With Yii3 ConfigProvider, `ResponseFactory` is automatically injected via DI container.
-
-### 4. Using InertiaAction Base Class (Recommended for Actions)
-
-For actions, extend the `InertiaAction` base class to eliminate boilerplate:
-
-```php
-use Crenspire\Inertia\Action\InertiaAction;
-use Psr\Http\Message\ResponseInterface;
-
-class HomeAction extends InertiaAction
-{
-    public function __invoke(): ResponseInterface
-    {
-        // Helper methods available:
-        // - $this->render() - Render Inertia page
-        // - $this->getRequest() - Get current request
-        // - $this->getQueryParam() - Get query parameter
-        // - $this->getBodyParam() - Get body parameter
-        // - $this->redirect() - Create redirect response
-        // - $this->isInertiaRequest() - Check if Inertia request
-        
-        return $this->render('Home', [
-            'title' => 'Welcome',
-            'page' => $this->getQueryParam('page', 1),
+        return $this->inertia->render($request, 'Users/Index', [
+            'users' => fn () => $this->users->findAll(),
         ]);
     }
 }
 ```
 
-**With DI Container (Yii3):**
-
-```php
-// Action is automatically instantiated with request and ResponseFactory
-$action = $container->get(HomeAction::class);
-return $action();
-```
-
-**Manual instantiation:**
-
-```php
-$action = new HomeAction($request, $responseFactory);
-return $action();
-```
-
-The base class automatically:
-- Sets request in Inertia service
-- Resolves ResponseFactory from DI container (if available)
-- Provides helper methods for common operations
-
-### 5. Setup Frontend
-
-Install Inertia.js and your frontend framework:
+### 4. Set up the frontend
 
 ```bash
-npm install @inertiajs/inertia @inertiajs/inertia-react react react-dom
+npm install @inertiajs/react react react-dom
+npm install -D vite @vitejs/plugin-react
 ```
 
-Create `src/main.jsx`:
+`vite.config.js`:
+
+```js
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+
+export default defineConfig(({ command }) => ({
+  base: command === 'build' ? '/build/' : '/',
+  plugins: [react()],
+  publicDir: false,
+  build: {
+    outDir: 'public/build',
+    manifest: true,
+    rollupOptions: { input: 'resources/js/app.jsx' },
+  },
+}))
+```
+
+`resources/js/app.jsx`:
 
 ```jsx
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { createInertiaApp } from '@inertiajs/inertia-react';
-import Home from './pages/Home';
+import { createInertiaApp } from '@inertiajs/react'
+import { createRoot } from 'react-dom/client'
 
 createInertiaApp({
   resolve: (name) => {
-    const pages = { Home };
-    return pages[name];
+    const pages = import.meta.glob('./Pages/**/*.jsx')
+    return pages[`./Pages/${name}.jsx`]()
   },
   setup({ el, App, props }) {
-    ReactDOM.createRoot(el).render(<App {...props} />);
+    createRoot(el).render(<App {...props} />)
   },
-});
+})
 ```
 
-## API Reference
+Run `npm run build` for production. During development, run `npx vite` and set `vite.devServerUrl` in your params
+(see below).
 
-### InertiaAction Base Class
+[`examples/yii3`](examples/yii3) contains a complete set of files for the `yiisoft/app` template.
 
-The `InertiaAction` base class provides a convenient way to create Inertia actions with automatic request handling and helper methods.
+### Configuration
 
-**Available Helper Methods:**
-
-- `render(string $component, array $props = []): ResponseInterface` - Render an Inertia page
-- `getRequest(): ServerRequestInterface` - Get the current request
-- `getQueryParam(string $name, $default = null)` - Get a query parameter
-- `getQueryParams(): array` - Get all query parameters
-- `getBodyParam(string $name, $default = null)` - Get a request body parameter
-- `getParsedBody(): array` - Get parsed request body
-- `getAttribute(string $name, $default = null)` - Get a request attribute
-- `getMethod(): string` - Get request method
-- `isGet(): bool` - Check if request is GET
-- `isPost(): bool` - Check if request is POST
-- `isInertiaRequest(): bool` - Check if request is an Inertia request
-- `redirect(string $url): ResponseInterface` - Create an Inertia redirect response
-- `getResponseFactory(): ResponseFactory` - Get the ResponseFactory instance
-
-**Example:**
+Override any of these values in your application's `config/web/params.php`:
 
 ```php
-use Crenspire\Inertia\Action\InertiaAction;
-use Psr\Http\Message\ResponseInterface;
-
-class UserAction extends InertiaAction
-{
-    public function __invoke(): ResponseInterface
-    {
-        if ($this->isPost()) {
-            // Handle POST request
-            $name = $this->getBodyParam('name');
-            // ... save user
-            return $this->redirect('/users');
-        }
-        
-        // Handle GET request
-        $userId = (int) $this->getQueryParam('id', 0);
-        return $this->render('User', [
-            'userId' => $userId,
-        ]);
-    }
-}
-```
-
-### Inertia::render()
-
-Render an Inertia page:
-
-```php
-$payload = Inertia::render('Dashboard', [
-    'users' => $users,
-]);
-```
-
-### Inertia::share()
-
-Share data with all Inertia responses:
-
-```php
-// Single key-value
-Inertia::share('appName', 'My App');
-
-// Multiple values
-Inertia::share([
-    'user' => $user,
-    'flash' => $flash,
-]);
-
-// Using closures
-Inertia::share('timestamp', function () {
-    return time();
-});
-```
-
-### Inertia::version()
-
-Set or get the asset version:
-
-```php
-// String version
-Inertia::version('1.0.0');
-
-// Callback version
-Inertia::version(function () {
-    return filemtime('/path/to/manifest.json');
-});
-
-// Get current version
-$version = Inertia::version();
-```
-
-### Inertia::location()
-
-Create an Inertia redirect response:
-
-```php
-$location = Inertia::location('/dashboard');
-// Returns: ['location' => '/dashboard', 'status' => 409 or 302]
-```
-
-The status code depends on the request type:
-- **Inertia requests**: Returns 409 (Conflict) status
-- **Regular requests**: Returns 302 (Found) status
-
-You can use this in your actions:
-
-```php
-public function store(ServerRequestInterface $request): ResponseInterface
-{
-    // ... save data
-    
-    $location = Inertia::location('/dashboard');
-    $response = $responseFactory->responseFactory->createResponse($location['status']);
-    
-    if ($location['status'] === 409) {
-        return $response->withHeader('X-Inertia-Location', $location['location']);
-    }
-    
-    return $response->withHeader('Location', $location['location']);
-}
-```
-
-### Global Helper
-
-You can also use the global `inertia()` helper function:
-
-```php
-$payload = inertia('Home', ['title' => 'Welcome'], $request);
-```
-
-## Partial Reloads
-
-Inertia supports partial reloads for better performance. The client can request only specific props:
-
-```php
-// Client sends: X-Inertia-Partial-Component: Dashboard
-// Client sends: X-Inertia-Partial-Data: users,stats
-
-// Only 'users' and 'stats' props will be returned (plus shared props)
-$payload = Inertia::render('Dashboard', [
-    'users' => $users,
-    'stats' => $stats,
-    'other' => $other, // This will be excluded
-]);
-```
-
-## Configuration
-
-### Asset Configuration (AssetConfig)
-
-Configure Vite dev server and production asset paths via Yii3 params:
-
-```php
-// config/params.php
 return [
-    'inertia' => [
-        'assetConfig' => [
-            'viteHost' => 'localhost',           // Vite dev server host
-            'vitePort' => 5173,                  // Vite dev server port
-            'viteEntryPath' => 'src/main.jsx',   // Entry point for Vite dev server
-            'manifestEntryKey' => 'src/main.jsx', // Manifest entry key (matches vite.config.js input)
-            'publicPath' => 'public',             // Public directory path
-            'buildOutputDir' => 'dist',           // Build output directory
-            'manifestFileName' => 'manifest.json', // Manifest file name
+    'crenspire/yii3-inertia' => [
+        'rootView' => '@root/resources/views/inertia.php',
+        // Extra root view variables. A Closure value is called with the DI container.
+        'viewParameters' => [],
+        // A string, a callable, or null to hash the Vite manifest.
+        'version' => null,
+        'manifestPath' => null,
+        'sharedProps' => [
+            'appName' => 'My App',
+        ],
+        'encryptHistory' => false,
+        'allErrors' => false,
+        'vite' => [
+            'publicPath' => '@public',
+            'buildDirectory' => 'build',
+            'manifest' => '.vite/manifest.json',
+            'devServerUrl' => $_ENV['VITE_DEV_SERVER_URL'] ?? null,
+            'hotFile' => 'hot',
+            'baseUrl' => '@baseUrl',
+        ],
+        'ssr' => [
+            'enabled' => false,
+            'url' => 'http://127.0.0.1:13714/render',
+            'except' => [],
+            'throwOnError' => false,
         ],
     ],
 ];
 ```
 
-The `AssetConfig` is automatically resolved from params when using ConfigProvider. You can also inject it directly:
+## Usage without Yii3
 
-```php
-use Crenspire\Inertia\AssetConfig;
-
-// Get from container
-$assetConfig = $container->get(AssetConfig::class);
-
-// Or create manually
-$assetConfig = new AssetConfig(
-    viteHost: 'localhost',
-    vitePort: 5173,
-    viteEntryPath: 'src/main.jsx',
-    manifestEntryKey: 'src/main.jsx',
-    publicPath: 'public',
-    buildOutputDir: 'dist',
-    manifestFileName: 'manifest.json'
-);
-```
-
-### Root View Path
-
-You can configure the root view path:
-
-```php
-Inertia::setRootView('custom-inertia');
-```
-
-### Dependency Injection (DI) Container
-
-**For Yii3 applications, use ConfigProvider (recommended):**
-
-```php
-// config/web.php
-return [
-    // ConfigProvider automatically configures all services
-    \Crenspire\Inertia\ConfigProvider::class,
-];
-```
-
-**Manual DI configuration (if not using ConfigProvider):**
-
-```php
-use Crenspire\Inertia\Middleware\InertiaMiddleware;
-use Crenspire\Inertia\ResponseFactory;
-use Psr\Http\Message\ResponseFactoryInterface;
-use Psr\Http\Message\StreamFactoryInterface;
-
-// In your DI container configuration
-$container->set(ResponseFactory::class, function ($container) {
-    $responseFactory = $container->get(ResponseFactoryInterface::class);
-    $streamFactory = $container->get(StreamFactoryInterface::class);
-    
-    // Required: provide a view renderer callback
-    // With Yii3 View (recommended):
-    $view = $container->get(\Yiisoft\View\WebView::class);
-    $viewRenderer = \Crenspire\Inertia\ResponseFactory::createViewRenderer($view);
-    
-    // Or custom view renderer:
-    // $viewRenderer = function (string $view, array $payload): string {
-    //     return $yourViewRenderer->render($view, ['page' => $payload]);
-    // };
-    
-    return new ResponseFactory($responseFactory, $streamFactory, $viewRenderer);
-});
-
-$container->set(InertiaMiddleware::class, function ($container) {
-    $responseFactory = $container->get(ResponseFactory::class);
-    $psrResponseFactory = $container->get(ResponseFactoryInterface::class);
-    return new InertiaMiddleware($responseFactory, $psrResponseFactory);
-});
-```
-
-### View Renderer Integration
-
-**Important:** `ResponseFactory` now requires a view renderer. The ConfigProvider automatically configures it using Yii3's `WebView` or `View` if available.
-
-**Manual configuration:**
-
-```php
-use Crenspire\Inertia\ResponseFactory;
-use Crenspire\Inertia\ViewRenderer;
-
-// With Yii3 View
-$viewRenderer = ResponseFactory::createViewRenderer($yii3View);
-
-// Or custom view renderer
-$viewRenderer = function (string $view, array $payload): string {
-    // Use your view rendering system (Twig, Blade, etc.)
-    return $yourViewRenderer->render($view, ['page' => $payload]);
-};
-
-$responseFactory = new ResponseFactory(
-    $psr17Factory,
-    $psr17Factory,
-    $viewRenderer
-);
-```
-
-**Note:** If `yiisoft/view` is not installed, you must provide a custom view renderer. The ConfigProvider will throw an exception if no view renderer is available.
-
-### Bootstrap/Initialization
-
-For shared props that should be available on every page, set them in your application bootstrap:
-
-**Using Inertia::share() directly (recommended):**
+Every service is a plain PSR component:
 
 ```php
 use Crenspire\Inertia\Inertia;
+use Crenspire\Inertia\Middleware\InertiaMiddleware;
+use Crenspire\Inertia\Version\ManifestVersion;
+use Crenspire\Inertia\View\PhpRootViewRenderer;
+use Crenspire\Inertia\Vite\Vite;
 
-// In your application bootstrap or middleware
-Inertia::share('user', function () use ($userService) {
-    return $userService->getCurrentUser();
-});
+$vite = new Vite(publicPath: __DIR__ . '/public');
 
-Inertia::share('app', [
-    'name' => 'My App',
-    'version' => '1.0.0',
+$inertia = new Inertia(
+    responseFactory: $psr17Factory,
+    streamFactory: $psr17Factory,
+    rootViewRenderer: new PhpRootViewRenderer(__DIR__ . '/resources/views/inertia.php', ['vite' => $vite]),
+    version: new ManifestVersion($vite->getManifestPath()),
+);
+
+$middleware = new InertiaMiddleware($inertia, $psr17Factory);
+```
+
+[`examples/psr15`](examples/psr15) is a runnable application built this way.
+
+## Responses
+
+```php
+// JSON for Inertia visits, the root view for the first visit.
+return $inertia->render($request, 'Users/Show', ['user' => $user]);
+
+// Redirects. After PUT, PATCH and DELETE the middleware turns 302 into 303.
+return $inertia->redirect('/users');
+return $inertia->back($request);
+
+// Full page visit, for example to an external site or a non-Inertia page.
+return $inertia->location($request, 'https://github.com/login');
+```
+
+To render the page object yourself, use `$inertia->createPage($request, $component, $props)`.
+
+## Props
+
+Props can be plain values, closures, `JsonSerializable` or `Traversable` objects, and the prop types below. Closures
+are only called when the prop is sent, so wrap expensive values in `fn () => ...`. Dot-notation keys such as
+`'user.name'` are expanded into nested arrays.
+
+```php
+return $inertia->render($request, 'Dashboard', [
+    // Resolved on every visit that includes the prop.
+    'stats' => fn () => $this->stats->summary(),
+
+    // Loaded in a separate request right after the page renders. Props in the same group load together.
+    'activity' => Inertia::defer(fn () => $this->activity->latest(), group: 'sidebar'),
+
+    // Only resolved when a partial reload asks for it: router.reload({ only: ['report'] }).
+    'report' => Inertia::optional(fn () => $this->reports->build()),
+
+    // Sent even when a partial reload did not ask for it.
+    'auth' => Inertia::always(fn () => $this->currentUser->toArray()),
+
+    // Merged into the client's current value on partial reloads.
+    'notifications' => Inertia::merge(fn () => $this->notifications->page($page)),
+    'settings' => Inertia::deepMerge($settings),
+
+    // Resolved once and remembered by the client, optionally until it expires.
+    'countries' => Inertia::once(fn () => $this->countries->all())->until(3600),
 ]);
 ```
 
-**Using Bootstrap helper (optional convenience):**
+Merge props support `prepend()`, merging at nested paths with `append('data')`, and matching items with
+`matchOn('id')`. Deferred props can also be merged and remembered: `Inertia::defer(...)->merge()->once()`. Pass
+`rescue: true` to `defer()` to log a failing prop and report it to the client instead of failing the request.
+
+### Infinite scroll
+
+`Inertia::scroll()` works with the client's `<InfiniteScroll>` component. It reads pagination metadata from
+`yiisoft/data` paginators:
 
 ```php
-use Crenspire\Inertia\Bootstrap;
+$paginator = (new OffsetPaginator($reader))
+    ->withPageSize(20)
+    ->withCurrentPage((int) ($request->getQueryParams()['page'] ?? 1));
 
-// In your application bootstrap
-Bootstrap::setupSharedProps($userService, $flashService);
-Bootstrap::setupVersion('/path/to/manifest.json');
-Bootstrap::setupRootView('inertia');
-
-// Or use the complete setup method
-Bootstrap::setup([
-    'userService' => $userService,
-    'flashService' => $flashService,
-    'manifestPath' => '/path/to/manifest.json',
-    'rootView' => 'inertia',
-    'shared' => [
-        'app' => ['name' => 'My App'],
-    ],
+return $inertia->render($request, 'Posts/Index', [
+    'posts' => Inertia::scroll($paginator),
 ]);
 ```
 
-**Note:** The Bootstrap helper is completely optional. It provides convenience methods but has zero overhead if not used. You can use `Inertia::share()` directly for the same result.
-
-## Version Management
-
-Inertia.js uses version checking to ensure the frontend and backend stay in sync. When the client's version doesn't match the server's version, a full page reload is triggered.
-
-### Automatic Version Detection
-
-By default, the version is automatically detected from your `manifest.json` file:
+For other data sources, pass the items and a metadata callback or a `ProvidesScrollMetadata` object:
 
 ```php
-// Automatically uses manifest.json mtime if it exists
-$version = Inertia::version();
+'posts' => Inertia::scroll(
+    ['data' => $items],
+    metadata: fn () => new ScrollMetadata('page', previousPage: $page - 1 ?: null, nextPage: $page + 1, currentPage: $page),
+),
 ```
 
-### Custom Version
+### Prop providers
 
-You can set a custom version:
+Implement `ProvidesInertiaProperty` to let an object resolve its own value, or `ProvidesInertiaProperties` to
+contribute several props at once. Pass the latter under a numeric key: `render($request, 'Page', [$provider])`.
+
+## Shared props
+
+Props shared with every page come from three places, in this order:
+
+1. The `errors` prop, which is always present.
+2. `sharedProps` in the params, or `$inertia->withSharedProps([...])`.
+3. Props shared for the current request, typically from a middleware:
 
 ```php
-// String version
-Inertia::version('1.0.0');
+final class ShareAuthMiddleware implements MiddlewareInterface
+{
+    public function __construct(private readonly CurrentUser $user)
+    {
+    }
 
-// Callback version (evaluated on each request)
-Inertia::version(function () {
-    return filemtime('/path/to/manifest.json');
-});
+    public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
+    {
+        $request = Inertia::share($request, 'auth', fn () => [
+            'userId' => $this->user->getId(),
+        ]);
+
+        return $handler->handle($request);
+    }
+}
 ```
 
-### Version Mismatch Handling
+Request data lives in request attributes, never in static state, so nothing leaks between requests in workers.
 
-When a client sends an `X-Inertia-Version` header that doesn't match the current version, the middleware automatically returns a location redirect (409 status) to trigger a full page reload. This ensures users always have the latest assets.
+## Validation errors
 
-## Middleware Registration Order
-
-The `InertiaMiddleware` should be registered early in your middleware stack, but after any authentication/authorization middleware that sets up the user context. This ensures:
-
-1. The request is available to the Inertia service
-2. Shared props can access authenticated user data
-3. Version checking happens before processing
-
-Example middleware stack order:
+Validation errors are shared as the `errors` prop, which `useForm()` picks up. To show them after a redirect, flash
+them with `InertiaFlash`, which uses `yiisoft/session` in Yii3:
 
 ```php
-1. Error handling middleware
-2. Authentication middleware
-3. InertiaMiddleware  ← Register here
-4. Routing middleware
-5. Controller/Action execution
+public function __invoke(ServerRequestInterface $request): ResponseInterface
+{
+    $result = $this->validator->validate($data, $rules);
+
+    if (!$result->isValid()) {
+        $this->flash->errors($result->getErrorMessagesIndexedByProperty());
+
+        return $this->inertia->back($request);
+    }
+
+    // ...
+}
 ```
 
-## Examples
+To render the page in the same request instead, use
+`Inertia::withErrors($request, $errors)`. Only the first message per field is sent unless `allErrors` is enabled.
+When a visit sets the `errorBag` option, the errors are nested under that name. For more than
+one form, pass the bag name as the second argument: `$flash->errors($errors, 'login')`.
 
-The repository includes several example applications:
+## Flash data and history
 
-### Yii3 Web Application Example
+```php
+$this->flash->flash('message', 'Profile updated.'); // page.flash.message on the next render
+$this->flash->clearHistory();                        // clear encrypted history, e.g. after logout
+$this->flash->preserveFragment();                    // keep the URL fragment across the next redirect
 
-Full Yii3 web application with ConfigProvider, controllers, and middleware:
-
-```bash
-cd examples/yii3-web
-composer install
-php -S localhost:8000 -t public
+$request = Inertia::encryptHistory($request);        // encrypt this page's history state
+$request = Inertia::clearHistory($request);
 ```
 
-See [examples/yii3-web/README.md](examples/yii3-web/README.md) for details.
+Without `yiisoft/session`, pass your own `FlashStoreInterface` implementation to `Inertia`.
 
-### Yii3 Minimal Example
+## Asset versioning
 
-Minimal Yii3 setup (DI + Router only):
+When assets change, the middleware answers Inertia GET visits carrying an old version with `409 Conflict`, and the
+client reloads the page. By default the version is a hash of the Vite manifest; it is recomputed only when the file
+changes. Use `version` in the params, or `StaticVersion`, `CallbackVersion`, or your own
+`VersionProviderInterface`.
 
-```bash
-cd examples/yii3-minimal
-composer install
-php -S localhost:8000 -t public
+## Vite
+
+`Vite` renders the tags for your entry points:
+
+- In production it reads the manifest and outputs stylesheets, module preloads and scripts.
+- When `devServerUrl` is set, or the `hot` file exists in the web root, it points to the Vite dev server.
+
+```php
+<?= $vite->reactRefresh() ?>  <!-- only needed with @vitejs/plugin-react -->
+<?= $vite->tags(['resources/js/app.jsx', 'resources/css/app.css']) ?>
+<img src="<?= $vite->asset('resources/images/logo.svg') ?>">
 ```
 
-See [examples/yii3-minimal/README.md](examples/yii3-minimal/README.md) for details.
+## Root view
 
-### Basic PSR Example
+`PhpRootViewRenderer` renders a PHP template with these variables:
 
-Basic PSR-7/PSR-15 example (for non-Yii3 frameworks):
+| Variable     | Description                                                              |
+|--------------|--------------------------------------------------------------------------|
+| `$inertia`   | `InertiaView`: `body()`, `head()`, `legacyBody()`, `pageJson()`, `page` |
+| `$request`   | The current `ServerRequestInterface`                                     |
+| `$vite`      | The `Vite` helper (Yii3 config only)                                     |
+| custom       | Entries from `viewParameters`                                            |
 
-```bash
-# Install dependencies
-cd examples/basic
-composer install
+Head elements with the `data-inertia` attribute are managed by the client: they are replaced by the elements of
+the page's `<Head>` component, and removed on the first render if the page has none. Drop the attribute from
+elements, such as `<title>`, that should stay when you do not use `<Head>`.
 
-# Install frontend dependencies
-cd vite
-npm install
+`body()` outputs the `<script type="application/json">` element and the `<div id="app">` root that Inertia.js 3
+expects. For Inertia.js 1 or 2 clients, use `legacyBody()`, which puts the page in a `data-page` attribute.
 
-# Build frontend assets
-npm run build
+To use another template engine, implement `RootViewRendererInterface`.
 
-# Or run dev server
-npm run dev
+## Server-side rendering
 
-# Start PHP server
-cd ../public
-php -S localhost:8000
+Build your SSR bundle as described in the [Inertia.js docs](https://inertiajs.com/docs/v3/advanced/server-side-rendering),
+start it with `node bootstrap/ssr/ssr.mjs`, and enable SSR:
+
+```php
+'ssr' => [
+    'enabled' => true,
+    'url' => 'http://127.0.0.1:13714/render',
+],
 ```
 
-**Note:** For Yii3 applications, use the Yii3 examples above instead.
-
-## Troubleshooting
-
-### Version Mismatch Issues
-
-If you're experiencing frequent full page reloads:
-1. Check your version callback returns a stable value
-2. Verify the `manifest.json` file exists and is accessible
-3. Ensure file permissions allow reading the manifest file
-
-### Middleware Not Working
-
-If the middleware isn't processing requests correctly:
-1. Verify middleware is registered in your middleware stack
-2. Check that `Inertia::setRequest()` is called (middleware does this automatically)
-3. Ensure the middleware receives both `ResponseFactory` and `ResponseFactoryInterface`
-
-### Redirect Not Working
-
-If redirects aren't working as expected:
-1. Ensure you're using `Inertia::location()` and handling the response correctly
-2. Check that the request has the `X-Inertia` header for Inertia requests
-3. Verify the response status code (409 for Inertia, 302 for regular)
-
-### Actions Not Setting Request
-
-If you get "Request not set" errors:
-1. Ensure `InertiaMiddleware` is registered and processes requests
-2. Or manually call `Inertia::setRequest($request)` in your actions
-3. Check middleware execution order
+This needs a PSR-18 `ClientInterface` and a PSR-17 `RequestFactoryInterface` in the container. `$inertia->head()`
+and `$inertia->body()` then output the server-rendered HTML. If the SSR server is unavailable, the failure is logged
+and the page is rendered on the client, unless `throwOnError` is enabled.
 
 ## Testing
 
-Run the test suite:
-
 ```bash
 composer install
-vendor/bin/phpunit
+composer test
+composer analyse
 ```
-
-## Requirements
-
-- PHP ^8.1
-- PSR-7, PSR-15 compatible framework
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) file for details.
-
-## Contributing
-
-Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
-
-## Changelog
-
-See [CHANGELOG.md](CHANGELOG.md) for a list of changes.
-
+MIT. See [LICENSE](LICENSE).
