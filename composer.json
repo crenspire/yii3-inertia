@@ -1,8 +1,17 @@
 {
     "name": "crenspire/yii3-inertia",
-    "description": "Inertia.js adapter for Yii3 framework",
+    "description": "Inertia.js server-side adapter for Yii3 and any PSR-15 application",
     "type": "library",
-    "keywords": ["yii3", "inertia", "inertiajs", "spa", "adapter", "psr-15", "psr-7"],
+    "keywords": [
+        "yii3",
+        "inertia",
+        "inertiajs",
+        "spa",
+        "adapter",
+        "psr-7",
+        "psr-15",
+        "vite"
+    ],
     "license": "MIT",
     "authors": [
         {
@@ -10,41 +19,63 @@
             "email": "akshay.joshi@crenspire.com"
         }
     ],
+    "support": {
+        "issues": "https://github.com/crenspire/yii3-inertia/issues",
+        "source": "https://github.com/crenspire/yii3-inertia"
+    },
     "require": {
-        "php": "^8.1",
-        "psr/http-message": "^2.0",
-        "psr/http-server-middleware": "^1.0",
+        "php": "8.2 - 8.5",
+        "psr/http-factory": "^1.1",
+        "psr/http-message": "^1.1 || ^2.0",
         "psr/http-server-handler": "^1.0",
-        "yiisoft/di": "^1.0",
-        "yiisoft/config": "^1.0"
+        "psr/http-server-middleware": "^1.0",
+        "psr/log": "^2.0 || ^3.0"
     },
     "require-dev": {
-        "phpunit/phpunit": "^10.0",
-        "nyholm/psr7": "^1.5"
+        "nyholm/psr7": "^1.8.2",
+        "phpstan/phpstan": "^2.1",
+        "phpunit/phpunit": "^11.5",
+        "psr/http-client": "^1.0",
+        "yiisoft/aliases": "^3.1",
+        "yiisoft/csrf": "^2.2",
+        "yiisoft/data": "^2.0",
+        "yiisoft/di": "^1.4",
+        "yiisoft/session": "^3.0"
     },
     "suggest": {
-        "yiisoft/view": "^1.0|^2.0 For Yii3 view renderer integration",
-        "yiisoft/http": "^1.0|^2.0|^3.0|^4.0 For Yii3 HTTP utilities (optional)",
-        "yiisoft/router": "^1.0|^2.0|^3.0|^4.0 For Yii3 routing (optional)",
-        "yiisoft/yii-web": "^1.0 For full Yii3 web application support"
+        "yiisoft/aliases": "To use aliases such as @root in the package params",
+        "yiisoft/session": "To flash validation errors, flash data and history flags across redirects",
+        "yiisoft/csrf": "To use XsrfTokenMiddleware with the Inertia.js client's X-XSRF-TOKEN header",
+        "yiisoft/data": "To build infinite scroll props from Yii data paginators",
+        "psr/http-client": "To use the HTTP server-side rendering gateway"
     },
     "autoload": {
         "psr-4": {
             "Crenspire\\Inertia\\": "src/"
-        },
-        "files": [
-            "src/Helpers.php"
-        ]
+        }
     },
     "autoload-dev": {
         "psr-4": {
             "Crenspire\\Inertia\\Tests\\": "tests/"
         }
     },
+    "extra": {
+        "branch-alias": {
+            "dev-develop": "2.x-dev"
+        },
+        "config-plugin-options": {
+            "source-directory": "config"
+        },
+        "config-plugin": {
+            "params": "params.php",
+            "di-web": "di-web.php"
+        }
+    },
     "config": {
         "sort-packages": true
     },
-    "minimum-stability": "dev",
-    "prefer-stable": true
+    "scripts": {
+        "test": "phpunit",
+        "analyse": "phpstan analyse --memory-limit=1G"
+    }
 }
-
