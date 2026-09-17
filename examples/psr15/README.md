@@ -28,6 +28,8 @@ npm run dev
 VITE_DEV_SERVER_URL=http://localhost:5173 php -S 127.0.0.1:8000 -t public public/index.php
 ```
 
+If port 5173 is taken, run `VITE_PORT=5174 npm run dev` and use `http://localhost:5174` as the dev server URL.
+
 ## Files
 
 - `public/index.php`: creates `Inertia`, `InertiaMiddleware` and the router.
