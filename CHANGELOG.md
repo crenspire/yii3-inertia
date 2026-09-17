@@ -26,6 +26,7 @@ A rewrite of the adapter. See [UPGRADE.md](UPGRADE.md) for migration steps.
 - Scroll metadata from `yiisoft/data` paginators.
 - Automatic Yii3 configuration through `yiisoft/config`.
 - Runnable PSR-15 example and a `yiisoft/app` example.
+- Documentation site at https://crenspire.github.io/yii3-inertia/.
 - PHPStan analysis in CI.
 
 ### Changed

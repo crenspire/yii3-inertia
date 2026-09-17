@@ -21,13 +21,26 @@ composer analyse  # PHPStan
 
 To try changes in a browser, run [`examples/psr15`](examples/psr15), which uses the package from the repository.
 
+## Documentation
+
+The documentation site is built with [VitePress](https://vitepress.dev) from the `docs` directory and published to
+GitHub Pages when `develop` changes.
+
+```bash
+cd docs
+npm install
+npm run dev
+```
+
+Update the documentation together with the code, and run `npm run build` to check for dead links.
+
 ## Guidelines
 
 - Follow PSR-12 and use `declare(strict_types=1);`.
 - Keep services free of per-request state; pass request data through request attributes.
 - Match the [Inertia.js protocol](https://inertiajs.com/docs/v3/core-concepts/the-protocol) and the reference Laravel
   adapter when adding protocol features.
-- Add tests for new behavior and update the README and CHANGELOG.
+- Add tests for new behavior, and update the documentation and CHANGELOG.
 
 ## Pull requests
 

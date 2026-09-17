@@ -12,6 +12,7 @@
         "psr-15",
         "vite"
     ],
+    "homepage": "https://crenspire.github.io/yii3-inertia/",
     "license": "MIT",
     "authors": [
         {
@@ -21,6 +22,7 @@
     ],
     "support": {
         "issues": "https://github.com/crenspire/yii3-inertia/issues",
+        "docs": "https://crenspire.github.io/yii3-inertia/",
         "source": "https://github.com/crenspire/yii3-inertia"
     },
     "require": {
