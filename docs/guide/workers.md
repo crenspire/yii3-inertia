@@ -21,3 +21,40 @@ The adapter is designed for this:
 - A custom `FlashStoreInterface` must store data per session, not in the object.
 - A custom `RootViewRendererInterface` that uses a stateful view, such as `WebView`, should call
   `withClearedState()` before rendering.
+
+## Sessions with yiisoft/session
+
+::: danger Session leak between visitors
+With PHP's native session handling, the session ID is global to the PHP process and survives between requests.
+The reset hook shipped with `yiisoft/session` clears the `Session` object but not that global ID, so in a worker a
+visitor without a session cookie continues the previous visitor's session. That exposes the previous user's session
+data, including [flashed errors and data](./flash-data).
+:::
+
+Override the session definition in your application and also clear the global ID when the state is reset:
+
+```php
+// config/web/di/session.php
+use Yiisoft\Session\Session;
+use Yiisoft\Session\SessionInterface;
+
+/** @var array $params */
+
+return [
+    SessionInterface::class => [
+        'class' => Session::class,
+        '__construct()' => [
+            $params['yiisoft/session']['session']['options'],
+            $params['yiisoft/session']['session']['handler'],
+        ],
+        'reset' => function () {
+            $this->sessionId = null;
+            $this->close();
+            session_id('');
+        },
+    ],
+];
+```
+
+This only matters when one PHP process handles many requests: in RoadRunner, Swoole and FrankenPHP workers, and in
+functional tests that run requests in a single process. PHP-FPM and the built-in server start every request fresh.
