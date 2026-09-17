@@ -50,7 +50,7 @@ return [
 ```
 
 `InertiaMiddleware` now takes `Inertia` and a PSR-17 response factory. Keep it in the middleware stack before
-`Router`, and add `XsrfTokenMiddleware` if you use `yiisoft/csrf` (see the README).
+`Router`, and add `XsrfTokenMiddleware` if you use `yiisoft/csrf` (see [CSRF protection](https://crenspire.github.io/yii3-inertia/guide/csrf)).
 
 ### 2. Actions and controllers
 
@@ -100,7 +100,7 @@ current user, with a middleware that calls `Inertia::share($request, ...)` and p
 ### 4. Root view
 
 1.x passed the page as an HTML-escaped JSON string in `$page`, which the stub escaped a second time. Replace your
-template with [`stubs/inertia.php`](stubs/inertia.php) and output the page with `$inertia->body()`, or
+template with [`stubs/inertia.php`](https://github.com/crenspire/yii3-inertia/blob/develop/stubs/inertia.php) and output the page with `$inertia->body()`, or
 `$inertia->legacyBody()` for Inertia.js 1 or 2 clients.
 
 ### 5. Redirects
