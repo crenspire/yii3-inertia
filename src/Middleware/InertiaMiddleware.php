@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace Crenspire\Inertia\Middleware;
 
+use Crenspire\Inertia\Header;
 use Crenspire\Inertia\Inertia;
-use Crenspire\Inertia\ResponseFactory;
 use Psr\Http\Message\ResponseFactoryInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
@@ -13,82 +13,78 @@ use Psr\Http\Server\MiddlewareInterface;
 use Psr\Http\Server\RequestHandlerInterface;
 
 /**
- * PSR-15 Middleware for Inertia.js
- * 
- * This middleware should be registered in your application's middleware stack.
- * It handles Inertia requests and sets up the Inertia service with the current request.
+ * Applies the Inertia.js protocol rules to requests and responses.
+ *
+ * - Answers GET visits with an outdated asset version with 409 so the client reloads the page.
+ * - Adds `Vary: X-Inertia` so browsers do not serve cached JSON for a full page load.
+ * - Turns 302 redirects after PUT, PATCH and DELETE into 303 so the browser follows them with GET.
+ * - Answers redirects to a URL with a fragment with 409 and X-Inertia-Redirect so the fragment is kept.
+ * - Redirects back when an Inertia visit gets an empty 200 response.
  */
-class InertiaMiddleware implements MiddlewareInterface
+final class InertiaMiddleware implements MiddlewareInterface
 {
-    private ResponseFactory $responseFactory;
-    private ResponseFactoryInterface $psrResponseFactory;
-
     public function __construct(
-        ResponseFactory $responseFactory,
-        ResponseFactoryInterface $psrResponseFactory
+        private readonly Inertia $inertia,
+        private readonly ResponseFactoryInterface $responseFactory,
     ) {
-        $this->responseFactory = $responseFactory;
-        $this->psrResponseFactory = $psrResponseFactory;
     }
 
-    /**
-     * Process an incoming server request and return a response
-     * 
-     * @param ServerRequestInterface $request
-     * @param RequestHandlerInterface $handler
-     * @return ResponseInterface
-     */
     public function process(ServerRequestInterface $request, RequestHandlerInterface $handler): ResponseInterface
     {
-        // Set the request in Inertia service
-        Inertia::setRequest($request);
-
-        // Check for version mismatch before processing
-        if (Inertia::isInertiaRequest($request) && $this->hasVersionMismatch($request)) {
-            $location = Inertia::location($request->getUri()->__toString());
-            $response = $this->psrResponseFactory->createResponse($location['status']);
-            if ($location['status'] === 409) {
-                $response = $response->withHeader('X-Inertia-Location', $location['location']);
-            } else {
-                $response = $response->withHeader('Location', $location['location']);
-            }
-            return $response;
+        if (!Inertia::isInertiaRequest($request)) {
+            return $this->addVary($handler->handle($request));
         }
 
-        // Process the request
+        $method = strtoupper($request->getMethod());
+        $version = $this->inertia->getVersion();
+
+        if ($method === 'GET' && $request->getHeaderLine(Header::VERSION) !== $version) {
+            $response = $this->inertia
+                ->location($request, (string) $request->getUri())
+                ->withHeader(Header::VERSION, $version);
+
+            return $this->addVary($response);
+        }
+
         $response = $handler->handle($request);
-        
-        // Check if controller set an Inertia payload in request attribute
-        // This allows actions to set payload and let middleware handle response
-        $payload = $request->getAttribute('inertia_payload');
-        if ($payload !== null) {
-            if (Inertia::isInertiaRequest($request)) {
-                return $this->responseFactory->json($payload);
-            }
-            return $this->responseFactory->html($payload, Inertia::getRootView());
+
+        if ($response->getStatusCode() === 200 && $response->getBody()->getSize() === 0) {
+            $response = $this->inertia->back($request);
         }
-        
-        // If response is already set by action (direct return), use it
-        // This supports both patterns: middleware handling or action handling
-        return $response;
+
+        if ($response->getStatusCode() === 302 && in_array($method, ['PUT', 'PATCH', 'DELETE'], true)) {
+            $response = $response->withStatus(303);
+        }
+
+        $location = $response->getHeaderLine('Location');
+        if (
+            $this->isRedirect($response)
+            && str_contains($location, '#')
+            && $request->getHeaderLine(Header::PURPOSE) !== 'prefetch'
+        ) {
+            $response = $this->responseFactory->createResponse(409)->withHeader(Header::REDIRECT, $location);
+        }
+
+        return $this->addVary($response);
     }
 
-    /**
-     * Check if there's a version mismatch
-     * 
-     * @param ServerRequestInterface $request
-     * @return bool
-     */
-    private function hasVersionMismatch(ServerRequestInterface $request): bool
+    private function isRedirect(ResponseInterface $response): bool
     {
-        if (!$request->hasHeader('X-Inertia-Version')) {
-            return false;
+        return in_array($response->getStatusCode(), [301, 302, 303, 307, 308], true)
+            && $response->hasHeader('Location');
+    }
+
+    private function addVary(ResponseInterface $response): ResponseInterface
+    {
+        foreach ($response->getHeader('Vary') as $line) {
+            foreach (explode(',', $line) as $value) {
+                $value = trim($value);
+                if ($value === '*' || strcasecmp($value, Header::INERTIA) === 0) {
+                    return $response;
+                }
+            }
         }
 
-        $requestVersion = $request->getHeaderLine('X-Inertia-Version');
-        $currentVersion = Inertia::version();
-
-        return $requestVersion !== (string) $currentVersion;
+        return $response->withAddedHeader('Vary', Header::INERTIA);
     }
 }
-

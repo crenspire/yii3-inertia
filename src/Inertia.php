@@ -5,283 +5,412 @@ declare(strict_types=1);
 namespace Crenspire\Inertia;
 
 use Closure;
+use Crenspire\Inertia\Flash\FlashStoreInterface;
+use Crenspire\Inertia\Flash\InertiaFlash;
+use Crenspire\Inertia\Prop\AlwaysProp;
+use Crenspire\Inertia\Prop\DeferProp;
+use Crenspire\Inertia\Prop\MergeProp;
+use Crenspire\Inertia\Prop\OnceProp;
+use Crenspire\Inertia\Prop\OptionalProp;
+use Crenspire\Inertia\Prop\ProvidesInertiaProperties;
+use Crenspire\Inertia\Prop\ProvidesScrollMetadata;
+use Crenspire\Inertia\Prop\ScrollProp;
+use Crenspire\Inertia\Ssr\GatewayInterface;
+use Crenspire\Inertia\Version\StaticVersion;
+use Crenspire\Inertia\Version\VersionProviderInterface;
+use Crenspire\Inertia\View\InertiaView;
+use Crenspire\Inertia\View\RootViewRendererInterface;
+use InvalidArgumentException;
+use Psr\Http\Message\ResponseFactoryInterface;
+use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
+use Psr\Http\Message\StreamFactoryInterface;
+use Psr\Http\Message\UriInterface;
+use Psr\Log\LoggerInterface;
+use stdClass;
 
 /**
- * Inertia service facade for Yii3
- * 
- * Provides a static interface to Inertia functionality, matching the
- * developer experience of inertia-laravel.
+ * Creates Inertia responses.
+ *
+ * The service holds no per-request state, so a single instance can serve every request, including in
+ * long-running workers. Request-specific data is passed through request attributes, see {@see share()}.
+ *
+ * ```php
+ * public function __invoke(ServerRequestInterface $request, Inertia $inertia): ResponseInterface
+ * {
+ *     return $inertia->render($request, 'Users/Index', [
+ *         'users' => fn () => $this->users->findAll(),
+ *     ]);
+ * }
+ * ```
  */
-class Inertia
+final class Inertia
 {
-    /**
-     * @var array<string, mixed> Shared props available to all Inertia responses
-     */
-    private static array $sharedProps = [];
+    public const SHARED_ATTRIBUTE = 'inertia.shared';
+    public const ERRORS_ATTRIBUTE = 'inertia.errors';
+    public const ENCRYPT_HISTORY_ATTRIBUTE = 'inertia.encryptHistory';
+    public const CLEAR_HISTORY_ATTRIBUTE = 'inertia.clearHistory';
+
+    private ?Closure $urlResolver = null;
 
     /**
-     * @var string|callable|null Asset version callback or string
+     * @param array<array-key, mixed> $sharedProps Props added to every page. Values may be callables and prop types.
+     * @param bool $encryptHistory Encrypt page data stored in the browser history.
+     * @param bool $allErrors Send every validation message per field instead of only the first one.
      */
-    private static $version = null;
-
-    /**
-     * @var string Root view template path
-     */
-    private static string $rootView = 'inertia';
-
-    /**
-     * @var ServerRequestInterface|null Current request
-     */
-    private static ?ServerRequestInterface $request = null;
-
-    /**
-     * Set the current request
-     * 
-     * @param ServerRequestInterface $request
-     * @return void
-     */
-    public static function setRequest(ServerRequestInterface $request): void
-    {
-        self::$request = $request;
+    public function __construct(
+        private readonly ResponseFactoryInterface $responseFactory,
+        private readonly StreamFactoryInterface $streamFactory,
+        private readonly RootViewRendererInterface $rootViewRenderer,
+        private readonly VersionProviderInterface $version = new StaticVersion(),
+        private readonly ?FlashStoreInterface $flashStore = null,
+        private readonly ?GatewayInterface $ssrGateway = null,
+        private readonly ?LoggerInterface $logger = null,
+        private array $sharedProps = [],
+        private bool $encryptHistory = false,
+        private bool $allErrors = false,
+    ) {
     }
 
     /**
-     * Get the current request
-     * 
-     * @return ServerRequestInterface|null
+     * Render a page component: JSON for Inertia visits, the root view for the first visit.
+     *
+     * @param array<array-key, mixed> $props
      */
-    public static function getRequest(): ?ServerRequestInterface
+    public function render(ServerRequestInterface $request, string $component, array $props = []): ResponseInterface
     {
-        return self::$request;
+        $page = $this->createPage($request, $component, $props);
+
+        return self::isInertiaRequest($request)
+            ? $this->jsonResponse($page)
+            : $this->htmlResponse($page, $request);
     }
 
     /**
-     * Render an Inertia page
-     * 
-     * @param string $component The Inertia component name (e.g., 'Dashboard/Index')
-     * @param array<string, mixed> $props Props to pass to the component
-     * @return array<string, mixed> Payload array for response factory
+     * Resolve props and build the page object without creating a response.
+     *
+     * @param array<array-key, mixed> $props
      */
-    public static function render(string $component, array $props = []): array
+    public function createPage(ServerRequestInterface $request, string $component, array $props = []): Page
     {
-        // Validate component name
-        if (empty($component)) {
-            throw new \InvalidArgumentException('Component name cannot be empty');
+        if ($component === '') {
+            throw new InvalidArgumentException('Inertia component name must not be empty.');
         }
 
-        // Validate props
-        if (!is_array($props)) {
-            throw new \InvalidArgumentException('Props must be an array');
+        $requestShared = $request->getAttribute(self::SHARED_ATTRIBUTE, []);
+        $shared = array_merge(
+            ['errors' => new AlwaysProp(fn (): object => $this->resolveErrors($request))],
+            $this->sharedProps,
+            is_array($requestShared) ? $requestShared : [],
+        );
+
+        [$resolvedProps, $metadata] = (new PropsResolver($request, $component, $this->logger))->resolve($shared, $props);
+
+        $encryptHistory = $request->getAttribute(self::ENCRYPT_HISTORY_ATTRIBUTE);
+        if (is_bool($encryptHistory) ? $encryptHistory : $this->encryptHistory) {
+            $metadata['encryptHistory'] = true;
         }
 
-        $request = self::$request;
-        if ($request === null) {
-            throw new \RuntimeException('Request not set. Ensure InertiaMiddleware is registered or call Inertia::setRequest().');
+        $clearHistory = $this->flashStore?->pull(InertiaFlash::CLEAR_HISTORY) === true;
+        if ($clearHistory || $request->getAttribute(self::CLEAR_HISTORY_ATTRIBUTE) === true) {
+            $metadata['clearHistory'] = true;
         }
 
-        // Note: Version mismatch is handled by middleware, not here
-        // This allows actions to handle it themselves if needed
-
-        // Merge shared props
-        $allProps = array_merge(self::getSharedProps(), $props);
-
-        // Handle partial reloads
-        if (self::isInertiaRequest($request) && self::isPartialReload($request)) {
-            $allProps = self::filterPartialProps($allProps, $request);
+        $flash = $this->flashStore?->pull(InertiaFlash::FLASH);
+        if (is_array($flash) && $flash !== []) {
+            $metadata['flash'] = $flash;
         }
 
-        // Build URL with query string
-        $uri = $request->getUri();
-        $url = $uri->getPath();
-        $query = $uri->getQuery();
-        if (!empty($query)) {
-            $url .= '?' . $query;
+        if ($this->flashStore?->pull(InertiaFlash::PRESERVE_FRAGMENT) === true) {
+            $metadata['preserveFragment'] = true;
         }
 
-        return [
-            'component' => $component,
-            'props' => $allProps,
-            'url' => $url,
-            'version' => self::version(),
-        ];
+        /** @var array<string, mixed> $resolvedProps */
+        return new Page($component, $resolvedProps, $this->resolveUrl($request), $this->getVersion(), $metadata);
     }
 
     /**
-     * Share data with all Inertia responses
-     * 
-     * @param string|array<string, mixed> $key Key or array of key-value pairs
-     * @param mixed $value Value or closure (if key is string)
-     * @return void
+     * Redirect to a URL outside of Inertia, such as another application or a non-Inertia page.
+     *
+     * Inertia visits receive 409 with X-Inertia-Location, which makes the client do a full page visit.
      */
-    public static function share($key, $value = null): void
+    public function location(ServerRequestInterface $request, string|UriInterface $url): ResponseInterface
     {
-        if (is_array($key)) {
-            foreach ($key as $k => $v) {
-                self::$sharedProps[$k] = $v;
-            }
-        } else {
-            self::$sharedProps[$key] = $value;
-        }
-    }
-
-    /**
-     * Get all shared props (evaluating closures)
-     * 
-     * @return array<string, mixed>
-     */
-    private static function getSharedProps(): array
-    {
-        $props = [];
-        foreach (self::$sharedProps as $key => $value) {
-            $props[$key] = $value instanceof Closure ? $value() : $value;
-        }
-        return $props;
-    }
-
-    /**
-     * Set or get the asset version
-     * 
-     * @param string|callable|null $version Version string or callback
-     * @return string|callable|null
-     */
-    public static function version($version = null)
-    {
-        if ($version !== null) {
-            self::$version = $version;
+        if (self::isInertiaRequest($request)) {
+            return $this->responseFactory->createResponse(409)->withHeader(Header::LOCATION, (string) $url);
         }
 
-        if (self::$version === null) {
-            // Default version - users should configure their own version callback
-            // For Yii3, there's no standard webroot alias, so we return a default
-            // Users can set their own version via Inertia::version() or a callback
-            return '1';
-        }
-
-        if (is_callable(self::$version)) {
-            try {
-                return call_user_func(self::$version);
-            } catch (\Exception $e) {
-                // Fallback to default version if callback fails
-                return '1';
-            }
-        }
-
-        return self::$version;
+        return $this->redirect($url);
     }
 
     /**
-     * Create an Inertia location redirect response data
-     * 
-     * @param string $url The URL to redirect to
-     * @return array<string, mixed> Response data for location redirect
+     * Regular redirect. InertiaMiddleware turns 302 into 303 after PUT, PATCH and DELETE.
      */
-    public static function location(string $url): array
+    public function redirect(string|UriInterface $url, int $status = 302): ResponseInterface
     {
-        $request = self::$request;
-        $isInertiaRequest = $request !== null && self::isInertiaRequest($request);
-        
-        return [
-            'location' => $url,
-            'status' => $isInertiaRequest ? 409 : 302, // 409 for Inertia, 302 for regular requests
-        ];
+        return $this->responseFactory->createResponse($status)->withHeader('Location', (string) $url);
     }
 
     /**
-     * Set the root view template
-     * 
-     * @param string $view View path
-     * @return void
+     * Redirect to the page the request came from.
      */
-    public static function setRootView(string $view): void
+    public function back(ServerRequestInterface $request, string $fallback = '/', int $status = 302): ResponseInterface
     {
-        self::$rootView = $view;
+        $referer = $request->getHeaderLine('Referer');
+
+        return $this->redirect($referer !== '' ? $referer : $fallback, $status);
     }
 
-    /**
-     * Get the root view template
-     * 
-     * @return string
-     */
-    public static function getRootView(): string
+    public function getVersion(): string
     {
-        return self::$rootView;
+        return $this->version->getVersion();
     }
 
     /**
-     * Flush shared props (useful for tests)
-     * 
-     * @return void
+     * @param array<array-key, mixed> $props
      */
-    public static function flushShared(): void
+    public function withSharedProps(array $props): self
     {
-        self::$sharedProps = [];
+        $new = clone $this;
+        $new->sharedProps = array_merge($this->sharedProps, $props);
+
+        return $new;
+    }
+
+    public function withEncryptHistory(bool $encrypt = true): self
+    {
+        $new = clone $this;
+        $new->encryptHistory = $encrypt;
+
+        return $new;
+    }
+
+    public function withAllErrors(bool $allErrors = true): self
+    {
+        $new = clone $this;
+        $new->allErrors = $allErrors;
+
+        return $new;
     }
 
     /**
-     * Check if the request is an Inertia request
-     * 
-     * @param ServerRequestInterface $request
-     * @return bool
+     * Customize the page URL, for example when the application is served from a sub-path behind a proxy.
+     *
+     * @param callable(ServerRequestInterface): string $resolver
      */
+    public function withUrlResolver(callable $resolver): self
+    {
+        $new = clone $this;
+        $new->urlResolver = $resolver(...);
+
+        return $new;
+    }
+
     public static function isInertiaRequest(ServerRequestInterface $request): bool
     {
-        return $request->hasHeader('X-Inertia');
+        return $request->getHeaderLine(Header::INERTIA) !== '';
     }
 
     /**
-     * Check if this is a partial reload request
-     * 
-     * @param ServerRequestInterface $request
-     * @return bool
+     * Share props for the current request only, typically from a middleware.
+     *
+     * ```php
+     * $request = Inertia::share($request, 'auth', ['user' => $identity]);
+     * return $handler->handle($request);
+     * ```
+     *
+     * @param string|array<array-key, mixed>|ProvidesInertiaProperties $key
      */
-    private static function isPartialReload(ServerRequestInterface $request): bool
-    {
-        return $request->hasHeader('X-Inertia-Partial-Component') 
-            && $request->hasHeader('X-Inertia-Partial-Data');
-    }
+    public static function share(
+        ServerRequestInterface $request,
+        string|array|ProvidesInertiaProperties $key,
+        mixed $value = null,
+    ): ServerRequestInterface {
+        $shared = $request->getAttribute(self::SHARED_ATTRIBUTE, []);
+        $shared = is_array($shared) ? $shared : [];
 
-    /**
-     * Filter props based on partial reload headers
-     * 
-     * @param array<string, mixed> $props
-     * @param ServerRequestInterface $request
-     * @return array<string, mixed>
-     */
-    private static function filterPartialProps(array $props, ServerRequestInterface $request): array
-    {
-        $partialData = $request->getHeaderLine('X-Inertia-Partial-Data');
-        
-        // If partial data header is empty, return all props
-        if (empty(trim($partialData))) {
-            return $props;
-        }
-        
-        $partialKeys = array_filter(array_map('trim', explode(',', $partialData)));
-        
-        // Always include shared props
-        $sharedKeys = array_keys(self::$sharedProps);
-        $allowedKeys = array_merge($sharedKeys, $partialKeys);
-        
-        return array_intersect_key($props, array_flip($allowedKeys));
-    }
-
-    /**
-     * Check if there's a version mismatch between request and current version
-     * 
-     * @param ServerRequestInterface $request
-     * @return bool
-     */
-    private static function hasVersionMismatch(ServerRequestInterface $request): bool
-    {
-        if (!$request->hasHeader('X-Inertia-Version')) {
-            return false;
+        if ($key instanceof ProvidesInertiaProperties) {
+            $shared[] = $key;
+        } elseif (is_array($key)) {
+            $shared = array_merge($shared, $key);
+        } else {
+            $shared[$key] = $value;
         }
 
-        $requestVersion = $request->getHeaderLine('X-Inertia-Version');
-        $currentVersion = self::version();
+        return $request->withAttribute(self::SHARED_ATTRIBUTE, $shared);
+    }
 
-        return $requestVersion !== (string) $currentVersion;
+    /**
+     * Add validation errors for a page rendered in the same request.
+     *
+     * To show errors after a redirect, use {@see InertiaFlash::errors()}.
+     *
+     * @param array<string, string|list<string>> $errors Messages indexed by field name.
+     */
+    public static function withErrors(ServerRequestInterface $request, array $errors, string $bag = 'default'): ServerRequestInterface
+    {
+        $bags = $request->getAttribute(self::ERRORS_ATTRIBUTE, []);
+        $bags = is_array($bags) ? $bags : [];
+        $bags[$bag] = array_merge(is_array($bags[$bag] ?? null) ? $bags[$bag] : [], $errors);
+
+        return $request->withAttribute(self::ERRORS_ATTRIBUTE, $bags);
+    }
+
+    public static function encryptHistory(ServerRequestInterface $request, bool $encrypt = true): ServerRequestInterface
+    {
+        return $request->withAttribute(self::ENCRYPT_HISTORY_ATTRIBUTE, $encrypt);
+    }
+
+    public static function clearHistory(ServerRequestInterface $request): ServerRequestInterface
+    {
+        return $request->withAttribute(self::CLEAR_HISTORY_ATTRIBUTE, true);
+    }
+
+    /**
+     * A prop that is only resolved when a partial reload asks for it.
+     */
+    public static function optional(callable $callback): OptionalProp
+    {
+        return new OptionalProp($callback);
+    }
+
+    /**
+     * A prop loaded by the client in a separate request right after the page renders.
+     *
+     * @param bool $rescue Log a failure and report it to the client instead of failing the request.
+     */
+    public static function defer(callable $callback, string $group = 'default', bool $rescue = false): DeferProp
+    {
+        return new DeferProp($callback, $group, $rescue);
+    }
+
+    /**
+     * A prop merged into the client's current value during partial reloads.
+     */
+    public static function merge(mixed $value): MergeProp
+    {
+        return new MergeProp($value);
+    }
+
+    /**
+     * A prop deep-merged into the client's current value during partial reloads.
+     */
+    public static function deepMerge(mixed $value): MergeProp
+    {
+        return (new MergeProp($value))->deepMerge();
+    }
+
+    /**
+     * A prop included in every response, even partial reloads that did not request it.
+     */
+    public static function always(mixed $value): AlwaysProp
+    {
+        return new AlwaysProp($value);
+    }
+
+    /**
+     * A prop resolved once and remembered by the client across visits.
+     */
+    public static function once(callable $callback): OnceProp
+    {
+        return new OnceProp($callback);
+    }
+
+    /**
+     * A paginated prop for the client's infinite scroll component.
+     *
+     * @param ProvidesScrollMetadata|callable(mixed): ProvidesScrollMetadata|null $metadata
+     */
+    public static function scroll(
+        mixed $value,
+        string $wrapper = 'data',
+        ProvidesScrollMetadata|callable|null $metadata = null,
+        string $pageName = 'page',
+    ): ScrollProp {
+        return new ScrollProp($value, $wrapper, $metadata, $pageName);
+    }
+
+    private function jsonResponse(Page $page): ResponseInterface
+    {
+        $json = json_encode($page, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        return $this->responseFactory->createResponse()
+            ->withHeader('Content-Type', 'application/json')
+            ->withHeader(Header::INERTIA, 'true')
+            ->withHeader('Vary', Header::INERTIA)
+            ->withBody($this->streamFactory->createStream($json));
+    }
+
+    private function htmlResponse(Page $page, ServerRequestInterface $request): ResponseInterface
+    {
+        $view = new InertiaView($page, $this->ssrGateway?->dispatch($page, $request));
+        $html = $this->rootViewRenderer->render($view, $request);
+
+        return $this->responseFactory->createResponse()
+            ->withHeader('Content-Type', 'text/html; charset=UTF-8')
+            ->withHeader('Vary', Header::INERTIA)
+            ->withBody($this->streamFactory->createStream($html));
+    }
+
+    private function resolveUrl(ServerRequestInterface $request): string
+    {
+        if ($this->urlResolver !== null) {
+            return (string) ($this->urlResolver)($request);
+        }
+
+        $uri = $request->getUri();
+        $url = '/' . ltrim($uri->getPath(), '/');
+        $query = $uri->getQuery();
+
+        return $query === '' ? $url : "{$url}?{$query}";
+    }
+
+    private function resolveErrors(ServerRequestInterface $request): object
+    {
+        $bags = [];
+
+        $flashed = $this->flashStore?->pull(InertiaFlash::ERRORS);
+        if (is_array($flashed)) {
+            $bags = $flashed;
+        }
+
+        $attribute = $request->getAttribute(self::ERRORS_ATTRIBUTE);
+        if (is_array($attribute)) {
+            foreach ($attribute as $bag => $errors) {
+                $bags[$bag] = array_merge(is_array($bags[$bag] ?? null) ? $bags[$bag] : [], (array) $errors);
+            }
+        }
+
+        $normalized = [];
+        foreach ($bags as $bag => $errors) {
+            if (!is_array($errors) || $errors === []) {
+                continue;
+            }
+            foreach ($errors as $field => $messages) {
+                if (is_array($messages)) {
+                    $messages = array_values(array_map('strval', $messages));
+                    if ($messages === []) {
+                        continue;
+                    }
+                    $normalized[$bag][$field] = $this->allErrors ? $messages : $messages[0];
+                } else {
+                    $normalized[$bag][$field] = $this->allErrors ? [(string) $messages] : (string) $messages;
+                }
+            }
+        }
+
+        if ($normalized === []) {
+            return new stdClass();
+        }
+
+        if (isset($normalized['default'])) {
+            $errorBag = $request->getHeaderLine(Header::ERROR_BAG);
+
+            return $errorBag !== ''
+                ? (object) [$errorBag => (object) $normalized['default']]
+                : (object) $normalized['default'];
+        }
+
+        return (object) array_map(static fn (array $errors): object => (object) $errors, $normalized);
     }
 }
-

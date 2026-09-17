@@ -1,10 +1,9 @@
 /vendor/
-/.phpunit.cache/
 /composer.lock
-/node_modules/
-/dist/
-*.log
+/.phpunit.cache/
+/phpunit.xml
+/phpstan.neon
+node_modules/
 .DS_Store
 .idea/
 .vscode/
-
